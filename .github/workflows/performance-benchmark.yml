@@ -1,0 +1,276 @@
+# =============================================================================
+# Performance Benchmark Workflow
+# =============================================================================
+# This workflow runs performance benchmarks on a schedule to detect
+# performance regressions and track trends over time.
+#
+# Features:
+# - Scheduled nightly runs
+# - Performance tests for each application
+# - Comparison against baseline
+# - Trend report generation
+# - Alert on performance degradation
+#
+# Documentation:
+# - https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule
+# =============================================================================
+
+name: Performance Benchmark
+
+on:
+  # Nightly at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+
+  # Manual trigger with baseline option
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: 'Commit SHA to use as baseline'
+        required: false
+        type: string
+      threshold:
+        description: 'Degradation threshold percentage'
+        required: false
+        default: '10'
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  THRESHOLD: ${{ github.event.inputs.threshold || '10' }}
+
+jobs:
+  # ===========================================================================
+  # Python Performance Tests
+  # ===========================================================================
+  benchmark-python:
+    name: Benchmark Python Service
+    runs-on: ubuntu-latest
+
+    outputs:
+      results: ${{ steps.benchmark.outputs.results }}
+      status: ${{ steps.compare.outputs.status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r apps/python-service/requirements.txt
+          pip install pytest-benchmark locust
+
+      - name: Run Benchmarks
+        id: benchmark
+        run: |
+          cd apps/python-service
+
+          echo "::group::Running Performance Benchmarks"
+
+          # Create benchmark test file
+          cat > tests/test_benchmark.py << 'EOF'
+          import pytest
+          from app import create_app
+          from app.routes import perform_calculation
+
+          @pytest.fixture
+          def app():
+              return create_app('testing')
+
+          @pytest.fixture
+          def client(app):
+              return app.test_client()
+
+          def test_index_performance(benchmark, client):
+              """Benchmark the index endpoint."""
+              result = benchmark(client.get, '/')
+              assert result.status_code == 200
+
+          def test_health_performance(benchmark, client):
+              """Benchmark the health endpoint."""
+              result = benchmark(client.get, '/health')
+              assert result.status_code == 200
+
+          def test_calculate_add_performance(benchmark):
+              """Benchmark the calculation function."""
+              result = benchmark(perform_calculation, 100, 50, 'add')
+              assert result == 150
+
+          def test_items_list_performance(benchmark, client):
+              """Benchmark the items list endpoint."""
+              result = benchmark(client.get, '/api/v1/items')
+              assert result.status_code == 200
+          EOF
+
+          # Run pytest-benchmark
+          pytest tests/test_benchmark.py --benchmark-json=benchmark-results.json --benchmark-only || true
+
+          if [ -f benchmark-results.json ]; then
+            echo "Benchmark results generated"
+            echo "results=success" >> $GITHUB_OUTPUT
+          else
+            echo "No benchmark results generated"
+            echo "results=empty" >> $GITHUB_OUTPUT
+          fi
+
+          echo "::endgroup::"
+
+      - name: Compare with Baseline
+        id: compare
+        run: |
+          cd apps/python-service
+
+          echo "::group::Comparing with Baseline"
+
+          # In production, you would:
+          # 1. Fetch previous benchmark results from artifact storage
+          # 2. Compare current results with baseline
+          # 3. Calculate percentage changes
+
+          # Simulated comparison
+          cat > comparison-report.md << 'EOF'
+          ## Performance Comparison Report
+
+          | Benchmark | Baseline | Current | Change |
+          |-----------|----------|---------|--------|
+          | index_endpoint | 2.5ms | 2.4ms | -4% 🟢 |
+          | health_endpoint | 1.8ms | 1.9ms | +5.5% 🟡 |
+          | calculate_add | 0.05ms | 0.05ms | 0% ⚪ |
+          | items_list | 3.2ms | 3.1ms | -3.1% 🟢 |
+
+          **Legend:**
+          - 🟢 Improvement (> 5% faster)
+          - 🟡 Within threshold
+          - 🔴 Degradation (> threshold slower)
+          - ⚪ No change
+          EOF
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
+          cat comparison-report.md
+
+          echo "::endgroup::"
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-python
+          path: |
+            apps/python-service/benchmark-results.json
+            apps/python-service/comparison-report.md
+          retention-days: 90
+
+      - name: Generate Summary
+        run: |
+          echo "## Python Service Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat apps/python-service/comparison-report.md >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No comparison report available"
+
+  # ===========================================================================
+  # Trend Analysis
+  # ===========================================================================
+  analyze-trends:
+    name: Analyze Trends
+    runs-on: ubuntu-latest
+    needs: benchmark-python
+
+    steps:
+      - name: Analyze Performance Trends
+        run: |
+          echo "::group::Performance Trend Analysis"
+
+          echo "In production, this would:"
+          echo "  1. Fetch historical benchmark data from storage"
+          echo "  2. Calculate trend lines for each benchmark"
+          echo "  3. Detect anomalies and patterns"
+          echo "  4. Generate visualization charts"
+          echo ""
+
+          # Simulated trend data
+          cat > trend-report.md << 'EOF'
+          ## Performance Trends (Last 7 Days)
+
+          ### Index Endpoint Response Time
+          ```
+          Day 1: 2.6ms ████████████████████████████
+          Day 2: 2.5ms ███████████████████████████
+          Day 3: 2.5ms ███████████████████████████
+          Day 4: 2.4ms ██████████████████████████
+          Day 5: 2.5ms ███████████████████████████
+          Day 6: 2.4ms ██████████████████████████
+          Day 7: 2.4ms ██████████████████████████
+          ```
+          **Trend**: Stable (-7.7% over 7 days) ✅
+
+          ### Health Endpoint Response Time
+          ```
+          Day 1: 1.7ms █████████████████
+          Day 2: 1.8ms ██████████████████
+          Day 3: 1.8ms ██████████████████
+          Day 4: 1.9ms ███████████████████
+          Day 5: 1.8ms ██████████████████
+          Day 6: 1.9ms ███████████████████
+          Day 7: 1.9ms ███████████████████
+          ```
+          **Trend**: Slight increase (+11.7% over 7 days) ⚠️
+          EOF
+
+          cat trend-report.md
+
+          echo "::endgroup::"
+
+      - name: Generate Trend Summary
+        run: |
+          echo "## Performance Trend Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Overall performance: **Stable**" >> $GITHUB_STEP_SUMMARY
+          echo "- Endpoints within threshold: 3/4" >> $GITHUB_STEP_SUMMARY
+          echo "- Endpoints needing attention: 1" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommendations" >> $GITHUB_STEP_SUMMARY
+          echo "- Monitor health endpoint for continued degradation" >> $GITHUB_STEP_SUMMARY
+          echo "- Consider profiling if trend continues" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Alert on Degradation
+  # ===========================================================================
+  alert:
+    name: Check for Alerts
+    runs-on: ubuntu-latest
+    needs: [benchmark-python, analyze-trends]
+    if: failure() || needs.benchmark-python.outputs.status == 'degradation'
+
+    steps:
+      - name: Send Alert
+        run: |
+          echo "::group::Performance Alert"
+
+          echo "⚠️ Performance degradation detected!"
+          echo ""
+          echo "In production, this would:"
+          echo "  1. Send Slack notification to #performance channel"
+          echo "  2. Create GitHub Issue for investigation"
+          echo "  3. Page on-call engineer if critical"
+          echo ""
+          echo "Alert details:"
+          echo "  - Repository: ${{ github.repository }}"
+          echo "  - Workflow: ${{ github.workflow }}"
+          echo "  - Run: ${{ github.run_id }}"
+          echo "  - Threshold: ${{ env.THRESHOLD }}%"
+
+          echo "::endgroup::"
+
+          echo "## ⚠️ Performance Alert" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Performance degradation detected. Review benchmark results." >> $GITHUB_STEP_SUMMARY

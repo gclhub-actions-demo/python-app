@@ -1,0 +1,292 @@
+# =============================================================================
+# Marketplace Actions Policy Demo Workflow
+# =============================================================================
+# This workflow demonstrates different GitHub Actions marketplace restriction
+# policies and their impact on workflow functionality.
+#
+# Policy Tiers Demonstrated:
+# 1. Allow All Actions (Not Recommended)
+# 2. Allow Verified Creators Only
+# 3. Allow Specific Actions (Recommended)
+# 4. Allow Local Actions Only
+#
+# Documentation:
+# - https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#allowing-select-actions-to-run
+# =============================================================================
+
+name: Marketplace Policy Demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      policy_tier:
+        description: 'Policy tier to demonstrate'
+        required: true
+        type: choice
+        options:
+          - all_actions
+          - verified_only
+          - specific_actions
+          - local_only
+        default: 'specific_actions'
+
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # Policy: Allow All Actions
+  # ===========================================================================
+  demo-all-actions:
+    name: Demo - All Actions Policy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.policy_tier == 'all_actions'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Policy Explanation
+        run: |
+          echo "## Policy: Allow All Actions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Description" >> $GITHUB_STEP_SUMMARY
+          echo "This policy allows ANY action from the GitHub Marketplace to run." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risk Profile: 🔴 HIGH" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risks" >> $GITHUB_STEP_SUMMARY
+          echo "- Supply chain attacks" >> $GITHUB_STEP_SUMMARY
+          echo "- Malicious code execution" >> $GITHUB_STEP_SUMMARY
+          echo "- Data exfiltration" >> $GITHUB_STEP_SUMMARY
+          echo "- Secret exposure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Use Cases" >> $GITHUB_STEP_SUMMARY
+          echo "- Proof of concept only" >> $GITHUB_STEP_SUMMARY
+          echo "- Small personal projects" >> $GITHUB_STEP_SUMMARY
+          echo "- Sandboxed test environments" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **NOT RECOMMENDED for production use**" >> $GITHUB_STEP_SUMMARY
+
+      # Example: Using any third-party action
+      - name: Example - Third Party Action
+        run: |
+          echo "With 'Allow All' policy, you could use ANY action, such as:"
+          echo "  uses: random-user/random-action@main"
+          echo ""
+          echo "This is dangerous because:"
+          echo "  - The action may be compromised"
+          echo "  - The maintainer may push malicious updates"
+          echo "  - You have no control over what code runs"
+
+  # ===========================================================================
+  # Policy: Allow Verified Creators Only
+  # ===========================================================================
+  demo-verified-only:
+    name: Demo - Verified Creators Policy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.policy_tier == 'verified_only'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Policy Explanation
+        run: |
+          echo "## Policy: Allow Verified Creators Only" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Description" >> $GITHUB_STEP_SUMMARY
+          echo "Only actions from GitHub-verified creators are allowed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risk Profile: 🟡 MEDIUM" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Verified Creators Include" >> $GITHUB_STEP_SUMMARY
+          echo "- GitHub (actions/*)" >> $GITHUB_STEP_SUMMARY
+          echo "- Microsoft" >> $GITHUB_STEP_SUMMARY
+          echo "- Docker" >> $GITHUB_STEP_SUMMARY
+          echo "- AWS" >> $GITHUB_STEP_SUMMARY
+          echo "- Google" >> $GITHUB_STEP_SUMMARY
+          echo "- Other verified organizations" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Benefits" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Reduced supply chain risk" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Actions from reputable sources" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Good balance of security and flexibility" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Limitations" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ May block legitimate community actions" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ Verification doesn't guarantee safety" >> $GITHUB_STEP_SUMMARY
+
+      - name: Allowed Example - GitHub Actions
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Show Allowed Actions
+        run: |
+          echo "Verified creator actions that would be ALLOWED:"
+          echo "  ✅ actions/checkout"
+          echo "  ✅ actions/setup-python"
+          echo "  ✅ docker/build-push-action"
+          echo "  ✅ aws-actions/configure-aws-credentials"
+          echo "  ✅ azure/webapps-deploy"
+          echo ""
+          echo "Actions that would be BLOCKED:"
+          echo "  ❌ random-user/some-action"
+          echo "  ❌ unverified-org/useful-action"
+
+  # ===========================================================================
+  # Policy: Allow Specific Actions (Recommended)
+  # ===========================================================================
+  demo-specific-actions:
+    name: Demo - Specific Actions Policy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.policy_tier == 'specific_actions'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Policy Explanation
+        run: |
+          echo "## Policy: Allow Specific Actions Only (RECOMMENDED)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Description" >> $GITHUB_STEP_SUMMARY
+          echo "Only explicitly allowlisted actions can run." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risk Profile: 🟢 LOW" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Example Allowlist" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "actions/checkout@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/setup-node@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/setup-python@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/setup-java@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/setup-dotnet@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/cache@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/upload-artifact@*" >> $GITHUB_STEP_SUMMARY
+          echo "actions/download-artifact@*" >> $GITHUB_STEP_SUMMARY
+          echo "github/codeql-action/*" >> $GITHUB_STEP_SUMMARY
+          echo "docker/build-push-action@*" >> $GITHUB_STEP_SUMMARY
+          echo "softprops/action-gh-release@*" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Benefits" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Maximum security control" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Known and vetted actions only" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Version pinning support" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Easy to audit" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Best Practices" >> $GITHUB_STEP_SUMMARY
+          echo "1. Pin actions to SHA for immutability" >> $GITHUB_STEP_SUMMARY
+          echo "2. Review action source before adding" >> $GITHUB_STEP_SUMMARY
+          echo "3. Regularly audit allowlist" >> $GITHUB_STEP_SUMMARY
+          echo "4. Remove unused actions" >> $GITHUB_STEP_SUMMARY
+
+      - name: Show Allowlist Configuration
+        run: |
+          echo "To configure this policy:"
+          echo ""
+          echo "1. Go to Repository Settings > Actions > General"
+          echo "2. Select 'Allow select actions and reusable workflows'"
+          echo "3. Add patterns like:"
+          echo ""
+          echo "   actions/*"
+          echo "   github/codeql-action/*"
+          echo "   docker/build-push-action@*"
+          echo ""
+          echo "For organization-wide settings:"
+          echo "1. Go to Organization Settings > Actions > General"
+          echo "2. Configure allowlist for all repositories"
+
+  # ===========================================================================
+  # Policy: Allow Local Actions Only
+  # ===========================================================================
+  demo-local-only:
+    name: Demo - Local Actions Only Policy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.policy_tier == 'local_only'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Policy Explanation
+        run: |
+          echo "## Policy: Local Actions Only" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Description" >> $GITHUB_STEP_SUMMARY
+          echo "Only actions defined within the repository or organization can run." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risk Profile: 🟢 LOWEST" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Use Cases" >> $GITHUB_STEP_SUMMARY
+          echo "- Air-gapped environments" >> $GITHUB_STEP_SUMMARY
+          echo "- Maximum security requirements" >> $GITHUB_STEP_SUMMARY
+          echo "- Regulated industries (finance, healthcare)" >> $GITHUB_STEP_SUMMARY
+          echo "- Government/military contractors" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Requirements" >> $GITHUB_STEP_SUMMARY
+          echo "- Must create local composite actions for all functionality" >> $GITHUB_STEP_SUMMARY
+          echo "- Cannot use marketplace actions directly" >> $GITHUB_STEP_SUMMARY
+          echo "- Increased development overhead" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Local Actions in This Repo" >> $GITHUB_STEP_SUMMARY
+          echo "- \`.github/actions/setup-build-env\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`.github/actions/quality-checks\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`.github/actions/package-artifacts\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Use Local Action - Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          stack-type: python
+          stack-version: '3.11'
+
+      - name: Use Local Action - Quality Checks
+        uses: ./.github/actions/quality-checks
+        with:
+          working-directory: apps/python-service
+          fail-on-error: 'false'
+
+      - name: Local Actions Summary
+        run: |
+          echo "## Using Local Actions Only" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This job demonstrated using only local composite actions:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **setup-build-env**: Sets up Python/Node/etc environments" >> $GITHUB_STEP_SUMMARY
+          echo "2. **quality-checks**: Runs linting and security scans" >> $GITHUB_STEP_SUMMARY
+          echo "3. **package-artifacts**: Packages and uploads build outputs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Benefits of local actions:" >> $GITHUB_STEP_SUMMARY
+          echo "- Full control over action code" >> $GITHUB_STEP_SUMMARY
+          echo "- No external dependencies" >> $GITHUB_STEP_SUMMARY
+          echo "- Audit trail in version control" >> $GITHUB_STEP_SUMMARY
+          echo "- Customized to organization needs" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Policy Comparison Summary
+  # ===========================================================================
+  summary:
+    name: Policy Comparison
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Generate Comparison
+        run: |
+          echo "## GitHub Actions Marketplace Policy Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Policy | Security | Flexibility | Maintenance |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|-------------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Allow All | 🔴 Low | 🟢 High | 🟢 Low |" >> $GITHUB_STEP_SUMMARY
+          echo "| Verified Only | 🟡 Medium | 🟡 Medium | 🟢 Low |" >> $GITHUB_STEP_SUMMARY
+          echo "| Specific Actions | 🟢 High | 🟡 Medium | 🟡 Medium |" >> $GITHUB_STEP_SUMMARY
+          echo "| Local Only | 🟢 Highest | 🔴 Low | 🔴 High |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommendations" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Small Teams / Personal**: Verified Only" >> $GITHUB_STEP_SUMMARY
+          echo "- **Enterprise**: Specific Actions (RECOMMENDED)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Regulated Industries**: Local Only or Specific Actions" >> $GITHUB_STEP_SUMMARY
+          echo "- **Never in Production**: Allow All" >> $GITHUB_STEP_SUMMARY

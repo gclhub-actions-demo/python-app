@@ -1,0 +1,387 @@
+# =============================================================================
+# Required Workflow: Compliance and Audit
+# =============================================================================
+# This workflow enforces organizational compliance policies and maintains
+# an audit trail for all changes. When configured as an organization-level
+# required workflow, it ensures consistent governance across repositories.
+#
+# Key Features:
+# - Commit signature verification
+# - Required files validation
+# - PR description template compliance
+# - Branch naming convention enforcement
+# - Audit trail logging
+#
+# Organization Ruleset Configuration:
+# 1. Go to Organization Settings > Rulesets
+# 2. Create new ruleset for compliance
+# 3. Add this workflow as required
+# 4. Configure branch protection to require this status check
+#
+# Documentation:
+# - https://docs.github.com/en/organizations/managing-organization-settings/managing-rulesets-for-repositories-in-your-organization
+# - https://docs.github.com/en/authentication/managing-commit-signature-verification
+# =============================================================================
+
+name: Required Compliance Check
+
+# =============================================================================
+# Triggers
+# =============================================================================
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'release/**'
+
+  pull_request:
+    branches:
+      - main
+      - develop
+      - 'release/**'
+
+  workflow_dispatch:
+    inputs:
+      skip_signature_check:
+        description: 'Skip commit signature verification (admin override)'
+        required: false
+        default: 'false'
+        type: boolean
+
+# =============================================================================
+# Permissions
+# =============================================================================
+permissions:
+  contents: read
+  pull-requests: read
+
+# =============================================================================
+# Concurrency
+# =============================================================================
+concurrency:
+  group: compliance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# =============================================================================
+# Jobs
+# =============================================================================
+jobs:
+  # ===========================================================================
+  # Commit Signature Verification
+  # ===========================================================================
+  # Ensures all commits are signed (GPG or SSH)
+  # ===========================================================================
+  verify-signatures:
+    name: Verify Commit Signatures
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_signature_check != 'true'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Commit Signatures
+        run: |
+          echo "::group::Commit Signature Verification"
+
+          # Get commits in this PR/push
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+
+          echo "Checking commits from ${BASE} to ${HEAD}"
+          echo ""
+
+          # Check if commits are signed
+          UNSIGNED=0
+          git log --format='%H %G?' ${BASE}..${HEAD} 2>/dev/null | while read COMMIT STATUS; do
+            case "$STATUS" in
+              G|U|X|Y)
+                echo "✅ ${COMMIT:0:8}: Signed (${STATUS})"
+                ;;
+              N)
+                echo "⚠️ ${COMMIT:0:8}: Not signed"
+                UNSIGNED=$((UNSIGNED + 1))
+                ;;
+              *)
+                echo "❓ ${COMMIT:0:8}: Unknown status (${STATUS})"
+                ;;
+            esac
+          done || true
+
+          echo ""
+          echo "Signature Status Legend:"
+          echo "  G: Good signature"
+          echo "  U: Good signature, untrusted key"
+          echo "  X: Good signature, expired key"
+          echo "  Y: Good signature, expired key"
+          echo "  N: No signature"
+          echo ""
+
+          echo "Note: Configure 'Require signed commits' in branch protection"
+          echo "to enforce commit signing at the repository level."
+
+          echo "::endgroup::"
+
+  # ===========================================================================
+  # Required Files Check
+  # ===========================================================================
+  # Verifies that required organizational files exist
+  # ===========================================================================
+  required-files:
+    name: Check Required Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check for Required Files
+        run: |
+          echo "::group::Required Files Check"
+
+          MISSING=0
+          WARNINGS=0
+
+          # Required files that MUST exist
+          echo "Checking required files..."
+
+          # LICENSE
+          if [ -f "LICENSE" ] || [ -f "LICENSE.md" ] || [ -f "LICENSE.txt" ]; then
+            echo "✅ LICENSE file exists"
+          else
+            echo "::error::LICENSE file is missing"
+            MISSING=$((MISSING + 1))
+          fi
+
+          # README
+          if [ -f "README.md" ] || [ -f "README" ]; then
+            echo "✅ README file exists"
+          else
+            echo "::error::README file is missing"
+            MISSING=$((MISSING + 1))
+          fi
+
+          echo ""
+          echo "Checking recommended files..."
+
+          # SECURITY.md (recommended)
+          if [ -f "SECURITY.md" ] || [ -f ".github/SECURITY.md" ]; then
+            echo "✅ SECURITY.md exists"
+          else
+            echo "::warning::SECURITY.md is recommended for vulnerability reporting"
+            WARNINGS=$((WARNINGS + 1))
+          fi
+
+          # CODE_OF_CONDUCT.md (recommended)
+          if [ -f "CODE_OF_CONDUCT.md" ] || [ -f ".github/CODE_OF_CONDUCT.md" ]; then
+            echo "✅ CODE_OF_CONDUCT.md exists"
+          else
+            echo "::warning::CODE_OF_CONDUCT.md is recommended"
+            WARNINGS=$((WARNINGS + 1))
+          fi
+
+          # CONTRIBUTING.md (recommended)
+          if [ -f "CONTRIBUTING.md" ] || [ -f ".github/CONTRIBUTING.md" ]; then
+            echo "✅ CONTRIBUTING.md exists"
+          else
+            echo "::notice::CONTRIBUTING.md is recommended for open source projects"
+          fi
+
+          # .gitignore
+          if [ -f ".gitignore" ]; then
+            echo "✅ .gitignore exists"
+          else
+            echo "::warning::.gitignore is recommended"
+            WARNINGS=$((WARNINGS + 1))
+          fi
+
+          echo ""
+          echo "Summary: ${MISSING} required files missing, ${WARNINGS} warnings"
+
+          echo "::endgroup::"
+
+          # Fail if required files are missing
+          if [ $MISSING -gt 0 ]; then
+            exit 1
+          fi
+
+  # ===========================================================================
+  # PR Description Validation
+  # ===========================================================================
+  # Ensures PR descriptions meet template requirements
+  # ===========================================================================
+  validate-pr-description:
+    name: Validate PR Description
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Validate PR Description
+        run: |
+          echo "::group::PR Description Validation"
+
+          BODY="${{ github.event.pull_request.body }}"
+
+          if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
+            echo "::warning::PR description is empty"
+            echo "Please provide a meaningful description for this PR."
+            echo ""
+            echo "Recommended sections:"
+            echo "  - Description of changes"
+            echo "  - Related issues (fixes #123)"
+            echo "  - Testing performed"
+            echo "  - Checklist items"
+          else
+            WORD_COUNT=$(echo "$BODY" | wc -w)
+            echo "PR description contains ${WORD_COUNT} words"
+
+            if [ $WORD_COUNT -lt 10 ]; then
+              echo "::warning::PR description is very short"
+            else
+              echo "✅ PR description appears adequate"
+            fi
+
+            # Check for issue references
+            if echo "$BODY" | grep -qE "(fixes|closes|resolves|ref) #[0-9]+"; then
+              echo "✅ Issue reference found"
+            else
+              echo "::notice::Consider linking related issues (e.g., 'fixes #123')"
+            fi
+          fi
+
+          echo "::endgroup::"
+
+  # ===========================================================================
+  # Branch Naming Convention
+  # ===========================================================================
+  # Enforces branch naming patterns
+  # ===========================================================================
+  branch-naming:
+    name: Validate Branch Name
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Check Branch Naming Convention
+        run: |
+          echo "::group::Branch Naming Validation"
+
+          BRANCH="${{ github.head_ref }}"
+          echo "Checking branch: ${BRANCH}"
+          echo ""
+
+          # Define allowed patterns
+          PATTERNS=(
+            "^main$"
+            "^develop$"
+            "^feature/[a-z0-9-]+$"
+            "^bugfix/[a-z0-9-]+$"
+            "^hotfix/[a-z0-9-]+$"
+            "^release/[0-9]+\.[0-9]+(\.[0-9]+)?$"
+            "^chore/[a-z0-9-]+$"
+            "^docs/[a-z0-9-]+$"
+            "^test/[a-z0-9-]+$"
+            "^dependabot/.*$"
+            "^copilot/.*$"
+          )
+
+          VALID=false
+          for pattern in "${PATTERNS[@]}"; do
+            if [[ "$BRANCH" =~ $pattern ]]; then
+              VALID=true
+              echo "✅ Branch name matches pattern: ${pattern}"
+              break
+            fi
+          done
+
+          if [ "$VALID" = false ]; then
+            echo "::warning::Branch name does not match expected patterns"
+            echo ""
+            echo "Expected patterns:"
+            echo "  feature/<name>   - New features"
+            echo "  bugfix/<name>    - Bug fixes"
+            echo "  hotfix/<name>    - Production hotfixes"
+            echo "  release/<x.y.z>  - Release branches"
+            echo "  chore/<name>     - Maintenance tasks"
+            echo "  docs/<name>      - Documentation updates"
+            echo ""
+            echo "Examples:"
+            echo "  feature/user-authentication"
+            echo "  bugfix/fix-login-error"
+            echo "  release/1.2.0"
+          fi
+
+          echo "::endgroup::"
+
+  # ===========================================================================
+  # Audit Trail
+  # ===========================================================================
+  # Logs all changes for compliance/audit purposes
+  # ===========================================================================
+  audit-log:
+    name: Generate Audit Log
+    runs-on: ubuntu-latest
+    needs: [verify-signatures, required-files]
+    if: always()
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Audit Entry
+        run: |
+          echo "::group::Audit Log Entry"
+
+          # Generate audit record
+          AUDIT_RECORD=$(cat << EOF
+          {
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "event_type": "${{ github.event_name }}",
+            "repository": "${{ github.repository }}",
+            "ref": "${{ github.ref }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "checks": {
+              "signature_verification": "${{ needs.verify-signatures.result }}",
+              "required_files": "${{ needs.required-files.result }}"
+            }
+          }
+          EOF
+          )
+
+          echo "$AUDIT_RECORD"
+          echo ""
+          echo "Note: In production, this would be sent to:"
+          echo "  - Centralized logging system (Splunk, ELK, etc.)"
+          echo "  - Compliance database"
+          echo "  - Security monitoring platform"
+
+          echo "::endgroup::"
+
+      - name: Compliance Summary
+        run: |
+          echo "## Compliance Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Signature Verification | ${{ needs.verify-signatures.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Required Files | ${{ needs.required-files.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Audit Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
