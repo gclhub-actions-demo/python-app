@@ -1,0 +1,5 @@
+include requirements.txt
+include README.md
+include pytest.ini
+include .flake8
+include .pylintrc
