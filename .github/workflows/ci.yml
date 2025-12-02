@@ -345,6 +345,9 @@ jobs:
     needs: [lint, test, security-scan, build]
     if: always()
 
+    permissions:
+      contents: read
+
     steps:
       - name: Generate Final Summary
         run: |
@@ -368,9 +371,14 @@ jobs:
 
       - name: Check Overall Status
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" ]] || \
-             [[ "${{ needs.test.result }}" != "success" ]]; then
+          # Check required jobs - allow 'success' or 'skipped' (for conditional jobs)
+          LINT_RESULT="${{ needs.lint.result }}"
+          TEST_RESULT="${{ needs.test.result }}"
+
+          if [[ "$LINT_RESULT" != "success" && "$LINT_RESULT" != "skipped" ]] || \
+             [[ "$TEST_RESULT" != "success" && "$TEST_RESULT" != "skipped" ]]; then
             echo "::error::One or more required jobs failed"
+            echo "Lint: $LINT_RESULT, Test: $TEST_RESULT"
             exit 1
           fi
           echo "✅ All required checks passed!"

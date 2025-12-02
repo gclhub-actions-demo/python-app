@@ -126,11 +126,17 @@ def perform_calculation(a: float, b: float, operation: str) -> float:
         ValueError: If operation is not supported
         ZeroDivisionError: If dividing by zero
     """
+    def safe_divide(x: float, y: float) -> float:
+        """Divide with zero check."""
+        if y == 0:
+            raise ZeroDivisionError("Cannot divide by zero")
+        return x / y
+
     operations = {
         "add": lambda x, y: x + y,
         "subtract": lambda x, y: x - y,
         "multiply": lambda x, y: x * y,
-        "divide": lambda x, y: x / y if y != 0 else (_ for _ in ()).throw(ZeroDivisionError()),
+        "divide": safe_divide,
     }
 
     if operation not in operations:

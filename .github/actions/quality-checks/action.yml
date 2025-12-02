@@ -259,9 +259,11 @@ runs:
         fi
 
         if [ "${{ steps.pylint.outputs.score }}" != "" ] && [ "${{ steps.pylint.outputs.score }}" != "N/A" ]; then
-          # Convert pylint score to percentage
-          PYLINT_SCORE=$(echo "${{ steps.pylint.outputs.score }}" | cut -d'/' -f1)
-          QUALITY_SCORE=$(echo "scale=0; ${PYLINT_SCORE} * 10" | bc 2>/dev/null || echo "0")
+          # Convert pylint score to percentage using bash arithmetic (no bc dependency)
+          PYLINT_SCORE="${{ steps.pylint.outputs.score }}"
+          # Remove decimal part and multiply by 10
+          PYLINT_INT=${PYLINT_SCORE%.*}
+          QUALITY_SCORE=$((PYLINT_INT * 10))
         fi
 
         if [ "${{ steps.bandit.outputs.issues }}" != "" ] && [ "${{ steps.bandit.outputs.issues }}" -gt 0 ]; then
