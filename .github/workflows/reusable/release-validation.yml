@@ -1,0 +1,282 @@
+# =============================================================================
+# Reusable Workflow: Release Validation
+# =============================================================================
+# This reusable workflow provides pre-release checks and validation to ensure
+# releases meet quality and compliance standards before deployment.
+#
+# Features:
+# - Semantic version validation
+# - Changelog verification
+# - Tag existence check
+# - Environment-based validation rules
+# - Approval gate integration
+#
+# Usage Example:
+#   jobs:
+#     validate:
+#       uses: ./.github/workflows/reusable/release-validation.yml
+#       with:
+#         version: '1.2.3'
+#         environment: staging
+#         require-approval: true
+#
+# Documentation:
+# - https://docs.github.com/en/actions/using-workflows/reusing-workflows
+# - https://semver.org/
+# =============================================================================
+
+name: Release Validation (Reusable)
+
+on:
+  workflow_call:
+    # ===========================================================================
+    # Input Parameters
+    # ===========================================================================
+    inputs:
+      version:
+        description: 'Release version (semver format, e.g., 1.2.3)'
+        required: true
+        type: string
+
+      environment:
+        description: 'Target environment (dev, staging, prod)'
+        required: true
+        type: string
+
+      require-approval:
+        description: 'Whether to require manual approval'
+        required: false
+        type: boolean
+        default: false
+
+      validate-changelog:
+        description: 'Whether to validate changelog'
+        required: false
+        type: boolean
+        default: true
+
+      changelog-path:
+        description: 'Path to changelog file'
+        required: false
+        type: string
+        default: 'CHANGELOG.md'
+
+      validate-tag:
+        description: 'Whether to validate tag exists'
+        required: false
+        type: boolean
+        default: true
+
+    # ===========================================================================
+    # Output Values
+    # ===========================================================================
+    outputs:
+      validation-status:
+        description: 'Overall validation status'
+        value: ${{ jobs.validate.outputs.status }}
+
+      version-valid:
+        description: 'Whether version is valid semver'
+        value: ${{ jobs.validate.outputs.version-valid }}
+
+      changelog-valid:
+        description: 'Whether changelog is valid'
+        value: ${{ jobs.validate.outputs.changelog-valid }}
+
+      tag-exists:
+        description: 'Whether the tag exists'
+        value: ${{ jobs.validate.outputs.tag-exists }}
+
+jobs:
+  # ===========================================================================
+  # Validation Job
+  # ===========================================================================
+  validate:
+    name: Validate Release (${{ inputs.version }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    outputs:
+      status: ${{ steps.final.outputs.status }}
+      version-valid: ${{ steps.version.outputs.valid }}
+      changelog-valid: ${{ steps.changelog.outputs.valid }}
+      tag-exists: ${{ steps.tag.outputs.exists }}
+
+    steps:
+      # -------------------------------------------------------------------------
+      # Checkout
+      # -------------------------------------------------------------------------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for tag checks
+
+      # -------------------------------------------------------------------------
+      # Version Validation
+      # -------------------------------------------------------------------------
+      - name: Validate Semantic Version
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          echo "Validating version: ${VERSION}"
+
+          # Remove 'v' prefix if present
+          VERSION_CLEAN="${VERSION#v}"
+
+          # Regex for semantic versioning
+          SEMVER_REGEX="^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?(\+[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$"
+
+          if [[ "$VERSION_CLEAN" =~ $SEMVER_REGEX ]]; then
+            echo "✅ Version '${VERSION}' is valid semver"
+            echo "valid=true" >> $GITHUB_OUTPUT
+
+            # Extract version components
+            IFS='.' read -ra VERSION_PARTS <<< "${VERSION_CLEAN%%-*}"
+            echo "major=${VERSION_PARTS[0]}" >> $GITHUB_OUTPUT
+            echo "minor=${VERSION_PARTS[1]}" >> $GITHUB_OUTPUT
+            echo "patch=${VERSION_PARTS[2]}" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Version '${VERSION}' is not valid semver"
+            echo "valid=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -------------------------------------------------------------------------
+      # Environment Validation
+      # -------------------------------------------------------------------------
+      - name: Validate Environment Configuration
+        id: environment
+        run: |
+          ENV="${{ inputs.environment }}"
+          echo "Validating environment: ${ENV}"
+
+          # Define environment-specific rules
+          case "${ENV}" in
+            dev|development)
+              echo "Environment 'dev' allows all versions"
+              echo "requires-stable=false" >> $GITHUB_OUTPUT
+              ;;
+            staging)
+              echo "Environment 'staging' allows RC and stable versions"
+              echo "requires-stable=false" >> $GITHUB_OUTPUT
+              ;;
+            prod|production)
+              echo "Environment 'production' requires stable versions"
+              echo "requires-stable=true" >> $GITHUB_OUTPUT
+
+              # Check if version is stable (no pre-release suffix)
+              if [[ "${{ inputs.version }}" =~ -[a-zA-Z] ]]; then
+                echo "::warning::Pre-release versions should not be deployed to production"
+              fi
+              ;;
+            *)
+              echo "::warning::Unknown environment: ${ENV}"
+              echo "requires-stable=false" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      # -------------------------------------------------------------------------
+      # Changelog Validation
+      # -------------------------------------------------------------------------
+      - name: Validate Changelog
+        id: changelog
+        if: inputs.validate-changelog
+        run: |
+          CHANGELOG="${{ inputs.changelog-path }}"
+          VERSION="${{ inputs.version }}"
+          VERSION_CLEAN="${VERSION#v}"
+
+          if [ -f "$CHANGELOG" ]; then
+            echo "Found changelog: ${CHANGELOG}"
+
+            # Check if version is mentioned in changelog
+            if grep -q "\[${VERSION_CLEAN}\]\|## ${VERSION_CLEAN}\|## \[${VERSION_CLEAN}\]" "$CHANGELOG"; then
+              echo "✅ Version ${VERSION_CLEAN} found in changelog"
+              echo "valid=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Version ${VERSION_CLEAN} not found in changelog"
+              echo "valid=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "⚠️ Changelog file not found: ${CHANGELOG}"
+            echo "valid=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -------------------------------------------------------------------------
+      # Tag Validation
+      # -------------------------------------------------------------------------
+      - name: Check Tag Exists
+        id: tag
+        if: inputs.validate-tag
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Check for both v-prefixed and non-prefixed tags
+          if git tag -l | grep -q "^v${VERSION#v}$\|^${VERSION#v}$"; then
+            echo "✅ Tag for version ${VERSION} exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Tag for version ${VERSION} does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -------------------------------------------------------------------------
+      # Final Status
+      # -------------------------------------------------------------------------
+      - name: Determine Final Status
+        id: final
+        run: |
+          VALID=true
+
+          # Check version validity (required)
+          if [[ "${{ steps.version.outputs.valid }}" != "true" ]]; then
+            VALID=false
+            echo "::error::Invalid version format"
+          fi
+
+          # Check changelog if required
+          if [[ "${{ inputs.validate-changelog }}" == "true" ]] && [[ "${{ steps.changelog.outputs.valid }}" != "true" ]]; then
+            echo "::warning::Changelog validation failed"
+            # Don't fail for changelog issues, just warn
+          fi
+
+          # Set final status
+          if [ "$VALID" = true ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ All validations passed"
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Validation failed"
+          fi
+
+      # -------------------------------------------------------------------------
+      # Generate Summary
+      # -------------------------------------------------------------------------
+      - name: Generate Validation Summary
+        run: |
+          echo "## Release Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ inputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Require Approval | ${{ inputs.require-approval }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version Valid | ${{ steps.version.outputs.valid }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Changelog Valid | ${{ steps.changelog.outputs.valid || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag Exists | ${{ steps.tag.outputs.exists || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Overall Status** | **${{ steps.final.outputs.status }}** |" >> $GITHUB_STEP_SUMMARY
+
+      # -------------------------------------------------------------------------
+      # Fail if validation failed
+      # -------------------------------------------------------------------------
+      - name: Check Validation Status
+        if: steps.final.outputs.status != 'success'
+        run: |
+          echo "::error::Release validation failed"
+          exit 1

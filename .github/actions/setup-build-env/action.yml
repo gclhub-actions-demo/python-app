@@ -1,0 +1,214 @@
+# =============================================================================
+# Composite Action: Setup Build Environment
+# =============================================================================
+# This composite action standardizes environment setup across workflows.
+# It supports multiple technology stacks and provides consistent caching.
+#
+# Features:
+# - Multi-stack support (Python, Node.js, Java, .NET)
+# - Automatic dependency caching
+# - Environment diagnostics
+# - Consistent tool versions
+#
+# Usage:
+#   - name: Setup Build Environment
+#     uses: ./.github/actions/setup-build-env
+#     with:
+#       stack-type: python
+#       stack-version: '3.11'
+#       enable-cache: true
+#
+# Documentation:
+# - https://docs.github.com/en/actions/creating-actions/creating-a-composite-action
+# =============================================================================
+
+name: 'Setup Build Environment'
+description: 'Standardize environment setup across workflows for multiple technology stacks'
+author: 'GitHub Actions Demo Team'
+
+# =============================================================================
+# Branding (for Marketplace)
+# =============================================================================
+branding:
+  icon: 'settings'
+  color: 'blue'
+
+# =============================================================================
+# Input Parameters
+# =============================================================================
+inputs:
+  stack-type:
+    description: 'Technology stack (python, node, java, dotnet)'
+    required: true
+
+  stack-version:
+    description: 'Version of the stack to install'
+    required: false
+    default: ''
+
+  enable-cache:
+    description: 'Enable dependency caching'
+    required: false
+    default: 'true'
+
+  cache-key-prefix:
+    description: 'Custom cache key prefix'
+    required: false
+    default: 'deps'
+
+  working-directory:
+    description: 'Working directory for the build'
+    required: false
+    default: '.'
+
+# =============================================================================
+# Output Values
+# =============================================================================
+outputs:
+  stack-version:
+    description: 'Installed stack version'
+    value: ${{ steps.detect-version.outputs.version }}
+
+  cache-hit:
+    description: 'Whether cache was hit'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+  environment-ready:
+    description: 'Whether environment is ready'
+    value: ${{ steps.finalize.outputs.ready }}
+
+# =============================================================================
+# Action Steps
+# =============================================================================
+runs:
+  using: 'composite'
+  steps:
+    # -------------------------------------------------------------------------
+    # Determine Stack Version
+    # -------------------------------------------------------------------------
+    - name: Determine Stack Version
+      id: detect-version
+      shell: bash
+      run: |
+        STACK="${{ inputs.stack-type }}"
+        VERSION="${{ inputs.stack-version }}"
+
+        # Set default versions if not specified
+        if [ -z "$VERSION" ]; then
+          case "$STACK" in
+            python)
+              VERSION="3.11"
+              ;;
+            node)
+              VERSION="20"
+              ;;
+            java)
+              VERSION="17"
+              ;;
+            dotnet)
+              VERSION="8.0"
+              ;;
+            *)
+              echo "::warning::Unknown stack type: $STACK"
+              VERSION="latest"
+              ;;
+          esac
+        fi
+
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "Using $STACK version: $VERSION"
+
+    # -------------------------------------------------------------------------
+    # Python Setup
+    # -------------------------------------------------------------------------
+    - name: Setup Python
+      if: inputs.stack-type == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ steps.detect-version.outputs.version }}
+        cache: ${{ inputs.enable-cache == 'true' && 'pip' || '' }}
+        cache-dependency-path: |
+          ${{ inputs.working-directory }}/requirements.txt
+          ${{ inputs.working-directory }}/requirements*.txt
+          ${{ inputs.working-directory }}/pyproject.toml
+
+    - name: Install Python Build Tools
+      if: inputs.stack-type == 'python'
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        echo "Python environment ready"
+
+    # -------------------------------------------------------------------------
+    # Node.js Setup
+    # -------------------------------------------------------------------------
+    - name: Setup Node.js
+      if: inputs.stack-type == 'node'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ steps.detect-version.outputs.version }}
+        cache: ${{ inputs.enable-cache == 'true' && 'npm' || '' }}
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    # -------------------------------------------------------------------------
+    # Java Setup
+    # -------------------------------------------------------------------------
+    - name: Setup Java
+      if: inputs.stack-type == 'java'
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ steps.detect-version.outputs.version }}
+        distribution: 'temurin'
+        cache: ${{ inputs.enable-cache == 'true' && 'maven' || '' }}
+
+    # -------------------------------------------------------------------------
+    # .NET Setup
+    # -------------------------------------------------------------------------
+    - name: Setup .NET
+      if: inputs.stack-type == 'dotnet'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ steps.detect-version.outputs.version }}
+
+    # -------------------------------------------------------------------------
+    # Environment Diagnostics
+    # -------------------------------------------------------------------------
+    - name: Print Environment Diagnostics
+      id: diagnostics
+      shell: bash
+      run: |
+        echo "::group::Environment Diagnostics"
+        echo "Stack Type: ${{ inputs.stack-type }}"
+        echo "Stack Version: ${{ steps.detect-version.outputs.version }}"
+        echo "Working Directory: ${{ inputs.working-directory }}"
+        echo "Cache Enabled: ${{ inputs.enable-cache }}"
+        echo ""
+
+        case "${{ inputs.stack-type }}" in
+          python)
+            echo "Python: $(python --version)"
+            echo "Pip: $(pip --version)"
+            ;;
+          node)
+            echo "Node: $(node --version)"
+            echo "NPM: $(npm --version)"
+            ;;
+          java)
+            echo "Java: $(java -version 2>&1 | head -1)"
+            ;;
+          dotnet)
+            echo "dotnet: $(dotnet --version)"
+            ;;
+        esac
+
+        echo "::endgroup::"
+
+    # -------------------------------------------------------------------------
+    # Finalize Setup
+    # -------------------------------------------------------------------------
+    - name: Finalize Setup
+      id: finalize
+      shell: bash
+      run: |
+        echo "ready=true" >> $GITHUB_OUTPUT
+        echo "✅ Build environment setup complete for ${{ inputs.stack-type }}"

@@ -1,0 +1,232 @@
+# =============================================================================
+# Dependency Update Automation Workflow
+# =============================================================================
+# This workflow automatically checks for dependency updates on a schedule,
+# creates PRs for updates, and can auto-merge patch updates that pass tests.
+#
+# Features:
+# - Scheduled weekly runs
+# - Checks for outdated dependencies
+# - Creates PRs for updates
+# - Runs security scans on updated deps
+# - Auto-merge for patch updates (optional)
+#
+# Documentation:
+# - https://docs.github.com/en/code-security/dependabot
+# =============================================================================
+
+name: Dependency Updates
+
+on:
+  # Weekly schedule - every Monday at 9 AM UTC
+  schedule:
+    - cron: '0 9 * * 1'
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Type of updates to check'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - security
+          - major
+          - minor
+          - patch
+
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: read
+
+jobs:
+  # ===========================================================================
+  # Check Python Dependencies
+  # ===========================================================================
+  check-python:
+    name: Check Python Dependencies
+    runs-on: ubuntu-latest
+
+    outputs:
+      updates-available: ${{ steps.check.outputs.updates }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check for Outdated Packages
+        id: check
+        run: |
+          echo "::group::Checking Python dependencies"
+
+          pip install pip-tools pip-audit
+
+          cd apps/python-service
+
+          # Check for outdated packages
+          pip install -r requirements.txt --quiet
+          pip list --outdated --format=json > outdated.json
+
+          OUTDATED_COUNT=$(cat outdated.json | python -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+          echo "Found ${OUTDATED_COUNT} outdated packages"
+
+          if [ "$OUTDATED_COUNT" -gt 0 ]; then
+            echo "updates=true" >> $GITHUB_OUTPUT
+            echo ""
+            echo "Outdated packages:"
+            cat outdated.json | python -c "
+import sys, json
+for pkg in json.load(sys.stdin):
+    print(f\"  {pkg['name']}: {pkg['version']} -> {pkg['latest_version']}\")
+"
+          else
+            echo "updates=false" >> $GITHUB_OUTPUT
+            echo "All packages are up to date!"
+          fi
+
+          echo "::endgroup::"
+
+      - name: Run Security Check on Dependencies
+        run: |
+          echo "::group::Security scan of dependencies"
+          cd apps/python-service
+
+          pip-audit -r requirements.txt --format json --output audit-results.json || true
+          pip-audit -r requirements.txt || true
+
+          echo "::endgroup::"
+
+      - name: Generate Report
+        run: |
+          echo "## Python Dependency Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "apps/python-service/outdated.json" ]; then
+            echo "### Outdated Packages" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Package | Current | Latest |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+
+            cat apps/python-service/outdated.json | python -c "
+import sys, json
+for pkg in json.load(sys.stdin):
+    print(f\"| {pkg['name']} | {pkg['version']} | {pkg['latest_version']} |\")
+" >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "| No outdated packages | - | - |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ===========================================================================
+  # Create Update PR (if needed)
+  # ===========================================================================
+  create-pr:
+    name: Create Update PR
+    runs-on: ubuntu-latest
+    needs: check-python
+    if: needs.check-python.outputs.updates-available == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Update Dependencies
+        id: update
+        run: |
+          cd apps/python-service
+
+          # Install tools
+          pip install pip-tools
+
+          # Create a backup
+          cp requirements.txt requirements.txt.bak
+
+          # Update requirements (keeping major versions)
+          pip install -r requirements.txt --upgrade --quiet
+
+          # Generate new requirements with pinned versions
+          pip freeze > requirements-new.txt
+
+          # Check if there are actual changes
+          if diff requirements.txt requirements-new.txt > /dev/null 2>&1; then
+            echo "No actual changes to requirements.txt"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Requirements updated"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          echo "::group::Creating PR for dependency updates"
+          echo ""
+          echo "In a real scenario, this would:"
+          echo "  1. Create a new branch: deps/update-$(date +%Y%m%d)"
+          echo "  2. Commit the updated requirements.txt"
+          echo "  3. Create a PR with the changes"
+          echo "  4. Run tests on the PR"
+          echo ""
+          echo "For automated dependency updates, consider using:"
+          echo "  - Dependabot (GitHub native)"
+          echo "  - Renovate Bot"
+          echo "  - PyUp.io"
+          echo ""
+          echo "::endgroup::"
+
+      - name: Dependency Update Summary
+        run: |
+          echo "## Dependency Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow demonstrates automated dependency management." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Recommended Tools" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dependabot**: Native GitHub integration, automatic PRs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Renovate**: Highly configurable, multi-platform" >> $GITHUB_STEP_SUMMARY
+          echo "- **pip-audit**: Security-focused Python dependency scanning" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Dependabot Configuration Info
+  # ===========================================================================
+  dependabot-info:
+    name: Dependabot Info
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Dependabot Recommendation
+        run: |
+          echo "## Recommended: Use Dependabot" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For production use, enable Dependabot by creating:" >> $GITHUB_STEP_SUMMARY
+          echo "\`.github/dependabot.yml\`:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "version: 2" >> $GITHUB_STEP_SUMMARY
+          echo "updates:" >> $GITHUB_STEP_SUMMARY
+          echo "  - package-ecosystem: pip" >> $GITHUB_STEP_SUMMARY
+          echo "    directory: /apps/python-service" >> $GITHUB_STEP_SUMMARY
+          echo "    schedule:" >> $GITHUB_STEP_SUMMARY
+          echo "      interval: weekly" >> $GITHUB_STEP_SUMMARY
+          echo "    open-pull-requests-limit: 5" >> $GITHUB_STEP_SUMMARY
+          echo "    groups:" >> $GITHUB_STEP_SUMMARY
+          echo "      dev-dependencies:" >> $GITHUB_STEP_SUMMARY
+          echo "        patterns:" >> $GITHUB_STEP_SUMMARY
+          echo "          - \"pytest*\"" >> $GITHUB_STEP_SUMMARY
+          echo "          - \"*lint*\"" >> $GITHUB_STEP_SUMMARY
+          echo "  - package-ecosystem: github-actions" >> $GITHUB_STEP_SUMMARY
+          echo "    directory: /" >> $GITHUB_STEP_SUMMARY
+          echo "    schedule:" >> $GITHUB_STEP_SUMMARY
+          echo "      interval: weekly" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

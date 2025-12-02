@@ -1,0 +1,441 @@
+# =============================================================================
+# Environment Demo Workflow
+# =============================================================================
+# This workflow demonstrates GitHub Actions environments with protection rules.
+# It shows how to use environments for progressive deployment with:
+# - Development (no protection)
+# - Staging (1 reviewer, wait timer)
+# - Production (2 reviewers, branch restrictions)
+#
+# Key Features Demonstrated:
+# - Environment-specific secrets and variables
+# - Protection rules and approval gates
+# - Deployment branches configuration
+# - Wait timers
+# - Environment URLs
+#
+# Documentation:
+# - https://docs.github.com/en/actions/deployment/targeting-different-environments
+# - https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
+# =============================================================================
+
+name: Environment Demo
+
+# =============================================================================
+# Triggers
+# =============================================================================
+on:
+  # Manual trigger with environment selection
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+        default: 'development'
+      deploy_version:
+        description: 'Version to deploy'
+        required: false
+        default: 'latest'
+        type: string
+
+  # Auto-deploy on push to main (to development)
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/python-service/**'
+
+# =============================================================================
+# Concurrency - Only one deployment per environment at a time
+# =============================================================================
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'development' }}
+  cancel-in-progress: false  # Don't cancel in-progress deployments
+
+# =============================================================================
+# Jobs
+# =============================================================================
+jobs:
+  # ===========================================================================
+  # Preparation Job
+  # ===========================================================================
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    outputs:
+      environment: ${{ steps.config.outputs.environment }}
+      version: ${{ steps.config.outputs.version }}
+      timestamp: ${{ steps.config.outputs.timestamp }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine Configuration
+        id: config
+        run: |
+          # Determine environment
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            VERSION="${{ github.event.inputs.deploy_version }}"
+          else
+            ENVIRONMENT="development"
+            VERSION="latest"
+          fi
+
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+
+          echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "## Deployment Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${ENVIRONMENT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${TIMESTAMP} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Development Deployment
+  # ===========================================================================
+  # Development environment has NO protection rules - auto-deploys
+  # ===========================================================================
+  deploy-development:
+    name: Deploy to Development
+    needs: prepare
+    if: needs.prepare.outputs.environment == 'development'
+    runs-on: ubuntu-latest
+
+    # Environment configuration
+    # Protection rules: None (auto-deploy)
+    # Secrets: DEV_API_ENDPOINT, DEV_DATABASE_URL
+    # Variables: ENVIRONMENT_NAME, LOG_LEVEL
+    environment:
+      name: development
+      url: https://dev.example.com
+
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display Environment Variables
+        run: |
+          echo "::group::Environment Information"
+          echo "Environment: development"
+          echo "URL: https://dev.example.com"
+          echo ""
+          echo "Available Variables (from environment):"
+          echo "  ENVIRONMENT_NAME: ${{ vars.ENVIRONMENT_NAME || 'development' }}"
+          echo "  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'debug' }}"
+          echo ""
+          echo "Note: Secrets are masked and not displayed"
+          echo "  DEV_API_ENDPOINT: [configured in environment secrets]"
+          echo "  DEV_DATABASE_URL: [configured in environment secrets]"
+          echo "::endgroup::"
+
+      - name: Simulate Deployment
+        run: |
+          echo "🚀 Deploying version ${{ needs.prepare.outputs.version }} to development..."
+          echo ""
+          echo "Steps that would be executed:"
+          echo "  1. Pull latest container image"
+          echo "  2. Apply configuration for development"
+          echo "  3. Deploy to development cluster"
+          echo "  4. Run smoke tests"
+          echo ""
+          sleep 2
+          echo "✅ Deployment to development completed!"
+
+      - name: Post-Deployment Summary
+        run: |
+          echo "## Development Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | development |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ needs.prepare.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://dev.example.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.prepare.outputs.timestamp }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Staging Deployment
+  # ===========================================================================
+  # Staging environment has MODERATE protection:
+  # - Required reviewers: 1
+  # - Wait timer: 5 minutes
+  # - Deployment branches: main, release/*
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    needs: prepare
+    if: needs.prepare.outputs.environment == 'staging'
+    runs-on: ubuntu-latest
+
+    # Environment configuration
+    # Protection rules:
+    #   - Required reviewers: 1 (configure in repository settings)
+    #   - Wait timer: 5 minutes (configure in repository settings)
+    #   - Deployment branches: main, release/*
+    # Secrets: STAGING_API_ENDPOINT, STAGING_DATABASE_URL
+    # Variables: ENVIRONMENT_NAME, LOG_LEVEL
+    environment:
+      name: staging
+      url: https://staging.example.com
+
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display Environment Variables
+        run: |
+          echo "::group::Environment Information"
+          echo "Environment: staging"
+          echo "URL: https://staging.example.com"
+          echo ""
+          echo "Protection Rules (configure in repository settings):"
+          echo "  - Required reviewers: 1"
+          echo "  - Wait timer: 5 minutes"
+          echo "  - Deployment branches: main, release/*"
+          echo ""
+          echo "Available Variables (from environment):"
+          echo "  ENVIRONMENT_NAME: ${{ vars.ENVIRONMENT_NAME || 'staging' }}"
+          echo "  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'info' }}"
+          echo "::endgroup::"
+
+      - name: Pre-Deployment Checks
+        run: |
+          echo "🔍 Running pre-deployment checks..."
+          echo ""
+          echo "  ✓ Version validated"
+          echo "  ✓ Dependencies checked"
+          echo "  ✓ Configuration verified"
+          echo ""
+
+      - name: Simulate Deployment
+        run: |
+          echo "🚀 Deploying version ${{ needs.prepare.outputs.version }} to staging..."
+          echo ""
+          echo "Steps being executed:"
+          echo "  1. Creating deployment manifest"
+          echo "  2. Applying database migrations"
+          echo "  3. Deploying application"
+          echo "  4. Running integration tests"
+          echo "  5. Verifying health checks"
+          echo ""
+          sleep 3
+          echo "✅ Deployment to staging completed!"
+
+      - name: Run Integration Tests
+        run: |
+          echo "🧪 Running integration tests against staging..."
+          echo ""
+          echo "  ✓ API endpoint tests passed"
+          echo "  ✓ Authentication tests passed"
+          echo "  ✓ Database connectivity verified"
+          echo ""
+
+      - name: Post-Deployment Summary
+        run: |
+          echo "## Staging Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | staging |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ needs.prepare.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://staging.example.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.prepare.outputs.timestamp }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Production Deployment
+  # ===========================================================================
+  # Production environment has STRICT protection:
+  # - Required reviewers: 2 (from different teams if possible)
+  # - Deployment branches: main only
+  # - No wait timer bypass
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    needs: prepare
+    if: needs.prepare.outputs.environment == 'production'
+    runs-on: ubuntu-latest
+
+    # Environment configuration
+    # Protection rules (configure in repository settings):
+    #   - Required reviewers: 2 (different teams recommended)
+    #   - Deployment branches: main only
+    #   - Prevent self-review: true
+    # Secrets: PROD_API_ENDPOINT, PROD_DATABASE_URL, PROD_SIGNING_KEY
+    # Variables: ENVIRONMENT_NAME, LOG_LEVEL
+    environment:
+      name: production
+      url: https://www.example.com
+
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display Environment Variables
+        run: |
+          echo "::group::Environment Information"
+          echo "Environment: production"
+          echo "URL: https://www.example.com"
+          echo ""
+          echo "Protection Rules (configure in repository settings):"
+          echo "  - Required reviewers: 2 (different teams recommended)"
+          echo "  - Deployment branches: main only"
+          echo "  - Prevent self-review: enabled"
+          echo ""
+          echo "Available Variables (from environment):"
+          echo "  ENVIRONMENT_NAME: ${{ vars.ENVIRONMENT_NAME || 'production' }}"
+          echo "  LOG_LEVEL: ${{ vars.LOG_LEVEL || 'warn' }}"
+          echo "::endgroup::"
+
+      - name: Pre-Deployment Validation
+        run: |
+          echo "🔍 Running production pre-deployment validation..."
+          echo ""
+          echo "Validation Checks:"
+          echo "  ✓ Version is stable (no pre-release suffix)"
+          echo "  ✓ All required approvals obtained"
+          echo "  ✓ Staging deployment verified"
+          echo "  ✓ Security scan passed"
+          echo "  ✓ Performance baseline validated"
+          echo ""
+
+      - name: Create Backup
+        run: |
+          echo "💾 Creating pre-deployment backup..."
+          echo ""
+          echo "  ✓ Database snapshot created"
+          echo "  ✓ Configuration backed up"
+          echo "  ✓ Rollback point established"
+          echo ""
+
+      - name: Simulate Blue-Green Deployment
+        run: |
+          echo "🚀 Deploying version ${{ needs.prepare.outputs.version }} to production..."
+          echo ""
+          echo "Blue-Green Deployment Steps:"
+          echo "  1. Provisioning green environment"
+          echo "  2. Deploying to green environment"
+          echo "  3. Running smoke tests on green"
+          echo "  4. Switching traffic to green"
+          echo "  5. Monitoring for issues"
+          echo "  6. Decommissioning blue environment"
+          echo ""
+          sleep 5
+          echo "✅ Production deployment completed successfully!"
+
+      - name: Post-Deployment Verification
+        run: |
+          echo "🔍 Verifying production deployment..."
+          echo ""
+          echo "  ✓ All health checks passing"
+          echo "  ✓ Error rates within threshold"
+          echo "  ✓ Response times normal"
+          echo "  ✓ No critical alerts triggered"
+          echo ""
+
+      - name: Post-Deployment Summary
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | production |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ needs.prepare.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://www.example.com |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployed by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | ${{ needs.prepare.outputs.timestamp }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Health checks passed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Performance verified" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ No errors detected" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
+  # Notification Job
+  # ===========================================================================
+  notify:
+    name: Send Notifications
+    needs: [prepare, deploy-development, deploy-staging, deploy-production]
+    if: always() && (needs.deploy-development.result == 'success' || needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Determine Deployment Result
+        id: result
+        run: |
+          ENV="${{ needs.prepare.outputs.environment }}"
+
+          case "$ENV" in
+            development)
+              STATUS="${{ needs.deploy-development.result }}"
+              ;;
+            staging)
+              STATUS="${{ needs.deploy-staging.result }}"
+              ;;
+            production)
+              STATUS="${{ needs.deploy-production.result }}"
+              ;;
+            *)
+              STATUS="unknown"
+              ;;
+          esac
+
+          echo "status=${STATUS}" >> $GITHUB_OUTPUT
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+
+      - name: Simulate Slack Notification
+        run: |
+          echo "📬 Sending deployment notification..."
+          echo ""
+          echo "Notification would be sent to: #deployments"
+          echo "Message:"
+          echo "  Environment: ${{ steps.result.outputs.environment }}"
+          echo "  Version: ${{ needs.prepare.outputs.version }}"
+          echo "  Status: ${{ steps.result.outputs.status }}"
+          echo "  Deployed by: ${{ github.actor }}"
+          echo ""
+          echo "In production, this would use:"
+          echo "  - Slack webhook (SLACK_WEBHOOK secret)"
+          echo "  - Microsoft Teams webhook"
+          echo "  - Email notifications"
+          echo "  - PagerDuty integration"
