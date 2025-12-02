@@ -1,0 +1,315 @@
+# =============================================================================
+# Composite Action: Package and Publish Artifacts
+# =============================================================================
+# This composite action standardizes artifact creation and upload across
+# workflows, providing consistent artifact management.
+#
+# Features:
+# - Collect build outputs based on patterns
+# - Generate artifact manifest with checksums
+# - Create compressed archives
+# - Upload to GitHub Actions artifacts
+# - Generate download URLs
+#
+# Usage:
+#   - name: Package Artifacts
+#     uses: ./.github/actions/package-artifacts
+#     with:
+#       artifact-name: my-app-v1.0.0
+#       working-directory: dist
+#       include-patterns: '**/*.whl,**/*.tar.gz'
+#       retention-days: 30
+#
+# Documentation:
+# - https://docs.github.com/en/actions/creating-actions/creating-a-composite-action
+# =============================================================================
+
+name: 'Package and Publish Artifacts'
+description: 'Standardize artifact creation, packaging, and upload'
+author: 'GitHub Actions Demo Team'
+
+# =============================================================================
+# Branding
+# =============================================================================
+branding:
+  icon: 'package'
+  color: 'purple'
+
+# =============================================================================
+# Input Parameters
+# =============================================================================
+inputs:
+  artifact-name:
+    description: 'Name for the artifact'
+    required: true
+
+  working-directory:
+    description: 'Build output location'
+    required: false
+    default: '.'
+
+  retention-days:
+    description: 'Artifact retention period in days'
+    required: false
+    default: '30'
+
+  include-patterns:
+    description: 'Files to include (comma-separated globs)'
+    required: false
+    default: '**/*'
+
+  exclude-patterns:
+    description: 'Files to exclude (comma-separated globs)'
+    required: false
+    default: '**/__pycache__/**,**/.git/**,**/node_modules/**'
+
+  generate-checksum:
+    description: 'Generate SHA256 checksums for files'
+    required: false
+    default: 'true'
+
+  create-archive:
+    description: 'Create a compressed archive'
+    required: false
+    default: 'true'
+
+  archive-format:
+    description: 'Archive format (zip, tar.gz)'
+    required: false
+    default: 'tar.gz'
+
+# =============================================================================
+# Output Values
+# =============================================================================
+outputs:
+  artifact-id:
+    description: 'Uploaded artifact ID'
+    value: ${{ steps.upload.outputs.artifact-id }}
+
+  artifact-url:
+    description: 'URL to download the artifact'
+    value: ${{ steps.upload.outputs.artifact-url }}
+
+  manifest-path:
+    description: 'Path to artifact manifest'
+    value: ${{ steps.manifest.outputs.path }}
+
+  checksum-file:
+    description: 'Path to checksum file'
+    value: ${{ steps.checksum.outputs.path }}
+
+  archive-path:
+    description: 'Path to created archive'
+    value: ${{ steps.archive.outputs.path }}
+
+# =============================================================================
+# Action Steps
+# =============================================================================
+runs:
+  using: 'composite'
+  steps:
+    # -------------------------------------------------------------------------
+    # Prepare Staging Directory
+    # -------------------------------------------------------------------------
+    - name: Prepare Staging Directory
+      id: prepare
+      shell: bash
+      run: |
+        STAGING_DIR="${{ runner.temp }}/artifact-staging"
+        mkdir -p "${STAGING_DIR}"
+        echo "staging-dir=${STAGING_DIR}" >> $GITHUB_OUTPUT
+        echo "Created staging directory: ${STAGING_DIR}"
+
+    # -------------------------------------------------------------------------
+    # Collect Files
+    # -------------------------------------------------------------------------
+    - name: Collect Build Outputs
+      id: collect
+      shell: bash
+      run: |
+        cd "${{ inputs.working-directory }}"
+        STAGING="${{ steps.prepare.outputs.staging-dir }}"
+
+        echo "::group::Collecting build outputs"
+
+        # Parse include patterns
+        IFS=',' read -ra INCLUDE_PATTERNS <<< "${{ inputs.include-patterns }}"
+
+        # Copy files matching patterns
+        for pattern in "${INCLUDE_PATTERNS[@]}"; do
+          pattern=$(echo "$pattern" | xargs)  # Trim whitespace
+          echo "Looking for: $pattern"
+
+          # Use find with glob patterns
+          find . -type f -name "$(basename "$pattern")" 2>/dev/null | while read file; do
+            # Skip excluded patterns
+            SKIP=false
+            IFS=',' read -ra EXCLUDE_PATTERNS <<< "${{ inputs.exclude-patterns }}"
+            for exclude in "${EXCLUDE_PATTERNS[@]}"; do
+              exclude=$(echo "$exclude" | xargs)
+              if [[ "$file" == *"__pycache__"* ]] || [[ "$file" == *".git"* ]] || [[ "$file" == *"node_modules"* ]]; then
+                SKIP=true
+                break
+              fi
+            done
+
+            if [ "$SKIP" = false ]; then
+              # Create directory structure and copy
+              mkdir -p "${STAGING}/$(dirname "$file")"
+              cp "$file" "${STAGING}/$file" 2>/dev/null || true
+              echo "Copied: $file"
+            fi
+          done
+        done
+
+        # Also copy dist directory if it exists
+        if [ -d "dist" ]; then
+          cp -r dist/* "${STAGING}/" 2>/dev/null || true
+          echo "Copied dist directory contents"
+        fi
+
+        # List collected files
+        echo ""
+        echo "Collected files:"
+        find "${STAGING}" -type f 2>/dev/null | head -50 || echo "No files collected"
+
+        echo "::endgroup::"
+
+        # Count files
+        FILE_COUNT=$(find "${STAGING}" -type f 2>/dev/null | wc -l)
+        echo "file-count=${FILE_COUNT}" >> $GITHUB_OUTPUT
+
+    # -------------------------------------------------------------------------
+    # Generate Checksums
+    # -------------------------------------------------------------------------
+    - name: Generate Checksums
+      id: checksum
+      if: inputs.generate-checksum == 'true'
+      shell: bash
+      run: |
+        STAGING="${{ steps.prepare.outputs.staging-dir }}"
+        CHECKSUM_FILE="${STAGING}/checksums.sha256"
+
+        echo "::group::Generating checksums"
+
+        cd "${STAGING}"
+        find . -type f -not -name "checksums.sha256" | while read file; do
+          sha256sum "$file" >> checksums.sha256
+        done
+
+        if [ -f "checksums.sha256" ]; then
+          echo "Generated checksums:"
+          cat checksums.sha256
+        else
+          echo "No files to checksum"
+        fi
+
+        echo "::endgroup::"
+
+        echo "path=${CHECKSUM_FILE}" >> $GITHUB_OUTPUT
+
+    # -------------------------------------------------------------------------
+    # Generate Manifest
+    # -------------------------------------------------------------------------
+    - name: Generate Artifact Manifest
+      id: manifest
+      shell: bash
+      run: |
+        STAGING="${{ steps.prepare.outputs.staging-dir }}"
+        MANIFEST_FILE="${STAGING}/manifest.json"
+
+        echo "::group::Generating manifest"
+
+        # Create manifest JSON
+        cat > "${MANIFEST_FILE}" << EOF
+        {
+          "artifact_name": "${{ inputs.artifact-name }}",
+          "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+          "github_run_id": "${{ github.run_id }}",
+          "github_run_number": "${{ github.run_number }}",
+          "github_sha": "${{ github.sha }}",
+          "github_ref": "${{ github.ref }}",
+          "github_repository": "${{ github.repository }}",
+          "github_actor": "${{ github.actor }}",
+          "file_count": ${{ steps.collect.outputs.file-count }},
+          "retention_days": ${{ inputs.retention-days }}
+        }
+        EOF
+
+        echo "Manifest contents:"
+        cat "${MANIFEST_FILE}"
+
+        echo "::endgroup::"
+
+        echo "path=${MANIFEST_FILE}" >> $GITHUB_OUTPUT
+
+    # -------------------------------------------------------------------------
+    # Create Archive
+    # -------------------------------------------------------------------------
+    - name: Create Archive
+      id: archive
+      if: inputs.create-archive == 'true'
+      shell: bash
+      run: |
+        STAGING="${{ steps.prepare.outputs.staging-dir }}"
+        ARCHIVE_NAME="${{ inputs.artifact-name }}"
+
+        echo "::group::Creating archive"
+
+        cd "${STAGING}"
+
+        case "${{ inputs.archive-format }}" in
+          zip)
+            ARCHIVE_FILE="${{ runner.temp }}/${ARCHIVE_NAME}.zip"
+            zip -r "${ARCHIVE_FILE}" . -x "*.zip"
+            ;;
+          tar.gz|tgz)
+            ARCHIVE_FILE="${{ runner.temp }}/${ARCHIVE_NAME}.tar.gz"
+            tar -czvf "${ARCHIVE_FILE}" .
+            ;;
+          *)
+            echo "Unknown archive format: ${{ inputs.archive-format }}"
+            ARCHIVE_FILE=""
+            ;;
+        esac
+
+        if [ -n "${ARCHIVE_FILE}" ] && [ -f "${ARCHIVE_FILE}" ]; then
+          echo "Created archive: ${ARCHIVE_FILE}"
+          echo "Archive size: $(du -h "${ARCHIVE_FILE}" | cut -f1)"
+          # Copy archive to staging for upload
+          cp "${ARCHIVE_FILE}" "${STAGING}/"
+        fi
+
+        echo "::endgroup::"
+
+        echo "path=${ARCHIVE_FILE}" >> $GITHUB_OUTPUT
+
+    # -------------------------------------------------------------------------
+    # Upload Artifact
+    # -------------------------------------------------------------------------
+    - name: Upload Artifact
+      id: upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.prepare.outputs.staging-dir }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: warn
+
+    # -------------------------------------------------------------------------
+    # Generate Summary
+    # -------------------------------------------------------------------------
+    - name: Generate Summary
+      shell: bash
+      run: |
+        echo "## Artifact Package Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Artifact Name | ${{ inputs.artifact-name }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Files Collected | ${{ steps.collect.outputs.file-count }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Retention Days | ${{ inputs.retention-days }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Archive Created | ${{ inputs.create-archive }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Checksums Generated | ${{ inputs.generate-checksum }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Artifact successfully packaged and uploaded" >> $GITHUB_STEP_SUMMARY

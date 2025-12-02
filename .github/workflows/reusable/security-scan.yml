@@ -1,0 +1,258 @@
+# =============================================================================
+# Reusable Workflow: Security Scanning
+# =============================================================================
+# This reusable workflow provides centralized security scanning capabilities.
+# It can be called from other workflows to perform various security checks.
+#
+# Features:
+# - Multiple scan types (SAST, SCA, secrets)
+# - Configurable severity thresholds
+# - Support for multiple languages
+# - SARIF upload to GitHub Security tab
+#
+# Usage Example:
+#   jobs:
+#     security:
+#       uses: ./.github/workflows/reusable/security-scan.yml
+#       with:
+#         language: python
+#         scan-type: sast
+#         severity-threshold: high
+#       secrets: inherit
+#
+# Documentation:
+# - https://docs.github.com/en/actions/using-workflows/reusing-workflows
+# - https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors
+# =============================================================================
+
+name: Security Scan (Reusable)
+
+on:
+  workflow_call:
+    # ===========================================================================
+    # Input Parameters
+    # ===========================================================================
+    inputs:
+      language:
+        description: 'Programming language to scan (python, node, java, dotnet)'
+        required: true
+        type: string
+        default: 'python'
+
+      scan-type:
+        description: 'Type of security scan (sast, sca, secrets, all)'
+        required: false
+        type: string
+        default: 'all'
+
+      severity-threshold:
+        description: 'Minimum severity to fail the build (critical, high, medium, low)'
+        required: false
+        type: string
+        default: 'high'
+
+      working-directory:
+        description: 'Working directory for the scan'
+        required: false
+        type: string
+        default: '.'
+
+      upload-sarif:
+        description: 'Upload SARIF results to GitHub Security tab'
+        required: false
+        type: boolean
+        default: true
+
+    # ===========================================================================
+    # Output Values
+    # ===========================================================================
+    outputs:
+      vulnerabilities-found:
+        description: 'Whether vulnerabilities were found'
+        value: ${{ jobs.scan.outputs.vulnerabilities-found }}
+
+      critical-count:
+        description: 'Number of critical vulnerabilities'
+        value: ${{ jobs.scan.outputs.critical-count }}
+
+      scan-status:
+        description: 'Overall scan status (success, warning, failure)'
+        value: ${{ jobs.scan.outputs.scan-status }}
+
+    # ===========================================================================
+    # Secrets (inherited from caller)
+    # ===========================================================================
+    secrets:
+      SONAR_TOKEN:
+        required: false
+        description: 'SonarCloud/SonarQube token for advanced scanning'
+
+jobs:
+  # ===========================================================================
+  # Main Security Scan Job
+  # ===========================================================================
+  scan:
+    name: Security Scan (${{ inputs.scan-type }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    outputs:
+      vulnerabilities-found: ${{ steps.results.outputs.vulnerabilities-found }}
+      critical-count: ${{ steps.results.outputs.critical-count }}
+      scan-status: ${{ steps.results.outputs.scan-status }}
+
+    steps:
+      # -------------------------------------------------------------------------
+      # Setup
+      # -------------------------------------------------------------------------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: Display Scan Configuration
+        run: |
+          echo "## Security Scan Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Language | ${{ inputs.language }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Type | ${{ inputs.scan-type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity Threshold | ${{ inputs.severity-threshold }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Working Directory | ${{ inputs.working-directory }} |" >> $GITHUB_STEP_SUMMARY
+
+      # -------------------------------------------------------------------------
+      # Language-Specific Setup
+      # -------------------------------------------------------------------------
+      - name: Setup Python
+        if: inputs.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Security Tools
+        if: inputs.language == 'python'
+        run: |
+          pip install bandit safety pip-audit
+
+      # -------------------------------------------------------------------------
+      # SAST Scanning (Static Application Security Testing)
+      # -------------------------------------------------------------------------
+      - name: Run SAST Scan - Python (Bandit)
+        if: inputs.language == 'python' && (inputs.scan-type == 'sast' || inputs.scan-type == 'all')
+        id: bandit
+        continue-on-error: true
+        run: |
+          echo "::group::Running Bandit SAST Scan"
+          bandit -r ${{ inputs.working-directory }} -f json -o bandit-results.json --exit-zero || true
+          bandit -r ${{ inputs.working-directory }} -f screen
+          echo "::endgroup::"
+
+      # -------------------------------------------------------------------------
+      # SCA Scanning (Software Composition Analysis)
+      # -------------------------------------------------------------------------
+      - name: Run SCA Scan - Python (pip-audit)
+        if: inputs.language == 'python' && (inputs.scan-type == 'sca' || inputs.scan-type == 'all')
+        id: pip-audit
+        continue-on-error: true
+        run: |
+          echo "::group::Running pip-audit SCA Scan"
+          if [ -f "${{ inputs.working-directory }}/requirements.txt" ]; then
+            pip-audit -r ${{ inputs.working-directory }}/requirements.txt --format json --output pip-audit-results.json || true
+            pip-audit -r ${{ inputs.working-directory }}/requirements.txt || true
+          else
+            echo "No requirements.txt found, skipping pip-audit"
+          fi
+          echo "::endgroup::"
+
+      # -------------------------------------------------------------------------
+      # Secret Scanning Simulation
+      # -------------------------------------------------------------------------
+      - name: Run Secret Scan Simulation
+        if: inputs.scan-type == 'secrets' || inputs.scan-type == 'all'
+        id: secrets
+        run: |
+          echo "::group::Simulating Secret Scanning"
+          # This is a simulation - in production, use tools like gitleaks or truffleHog
+          echo "Secret scanning would check for:"
+          echo "  - API keys"
+          echo "  - Private keys"
+          echo "  - Database credentials"
+          echo "  - OAuth tokens"
+          echo ""
+          echo "NOTE: GitHub's native secret scanning is recommended for real implementations"
+          echo "::endgroup::"
+
+      # -------------------------------------------------------------------------
+      # Process Results
+      # -------------------------------------------------------------------------
+      - name: Process Scan Results
+        id: results
+        run: |
+          VULNERABILITIES_FOUND=false
+          CRITICAL_COUNT=0
+          SCAN_STATUS="success"
+
+          # Check Bandit results if available
+          if [ -f "bandit-results.json" ]; then
+            BANDIT_HIGH=$(cat bandit-results.json | jq '.metrics._totals."SEVERITY.HIGH" // 0')
+            BANDIT_CRITICAL=$(cat bandit-results.json | jq '.metrics._totals."SEVERITY.HIGH" // 0')
+            if [ "$BANDIT_HIGH" -gt 0 ]; then
+              VULNERABILITIES_FOUND=true
+              CRITICAL_COUNT=$((CRITICAL_COUNT + BANDIT_HIGH))
+              SCAN_STATUS="warning"
+            fi
+          fi
+
+          # Determine final status based on threshold
+          case "${{ inputs.severity-threshold }}" in
+            "critical")
+              if [ "$CRITICAL_COUNT" -gt 0 ]; then SCAN_STATUS="failure"; fi
+              ;;
+            "high")
+              if [ "$CRITICAL_COUNT" -gt 0 ]; then SCAN_STATUS="failure"; fi
+              ;;
+            "medium"|"low")
+              if [ "$VULNERABILITIES_FOUND" = "true" ]; then SCAN_STATUS="warning"; fi
+              ;;
+          esac
+
+          echo "vulnerabilities-found=${VULNERABILITIES_FOUND}" >> $GITHUB_OUTPUT
+          echo "critical-count=${CRITICAL_COUNT}" >> $GITHUB_OUTPUT
+          echo "scan-status=${SCAN_STATUS}" >> $GITHUB_OUTPUT
+
+          # Add to summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Result | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Vulnerabilities Found | ${VULNERABILITIES_FOUND} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Critical Issues | ${CRITICAL_COUNT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${SCAN_STATUS} |" >> $GITHUB_STEP_SUMMARY
+
+      # -------------------------------------------------------------------------
+      # Upload Artifacts
+      # -------------------------------------------------------------------------
+      - name: Upload Scan Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-scan-results-${{ github.run_id }}
+          path: |
+            bandit-results.json
+            pip-audit-results.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # -------------------------------------------------------------------------
+      # Final Status Check
+      # -------------------------------------------------------------------------
+      - name: Check Threshold
+        if: steps.results.outputs.scan-status == 'failure'
+        run: |
+          echo "::error::Security scan failed - found ${{ steps.results.outputs.critical-count }} critical issues"
+          exit 1

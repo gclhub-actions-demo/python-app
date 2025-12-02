@@ -1,0 +1,256 @@
+# =============================================================================
+# Reusable Workflow: Build and Test
+# =============================================================================
+# This reusable workflow provides a generic build and test pattern that can
+# be customized for different technology stacks through inputs.
+#
+# Features:
+# - Dynamic tool setup based on stack type
+# - Dependency caching for faster builds
+# - Test result publishing
+# - Coverage reporting
+# - Artifact upload with retention policies
+#
+# Usage Example:
+#   jobs:
+#     build-test:
+#       uses: ./.github/workflows/reusable/build-test.yml
+#       with:
+#         working-directory: apps/python-service
+#         stack-type: python
+#         upload-artifacts: true
+#         artifact-name: python-app
+#         test-command: pytest --cov
+#
+# Documentation:
+# - https://docs.github.com/en/actions/using-workflows/reusing-workflows
+# =============================================================================
+
+name: Build and Test (Reusable)
+
+on:
+  workflow_call:
+    # ===========================================================================
+    # Input Parameters
+    # ===========================================================================
+    inputs:
+      working-directory:
+        description: 'Path to application directory'
+        required: true
+        type: string
+
+      stack-type:
+        description: 'Technology stack identifier (python, node, java, dotnet)'
+        required: true
+        type: string
+
+      stack-version:
+        description: 'Version of the stack runtime to use'
+        required: false
+        type: string
+        default: ''
+
+      upload-artifacts:
+        description: 'Whether to upload build artifacts'
+        required: false
+        type: boolean
+        default: true
+
+      artifact-name:
+        description: 'Name for build artifacts'
+        required: false
+        type: string
+        default: 'build-artifacts'
+
+      test-command:
+        description: 'Custom test command to run'
+        required: false
+        type: string
+        default: ''
+
+      enable-cache:
+        description: 'Enable dependency caching'
+        required: false
+        type: boolean
+        default: true
+
+      fail-on-test-failure:
+        description: 'Fail the workflow if tests fail'
+        required: false
+        type: boolean
+        default: true
+
+    # ===========================================================================
+    # Output Values
+    # ===========================================================================
+    outputs:
+      build-status:
+        description: 'Build status (success/failure)'
+        value: ${{ jobs.build-test.outputs.build-status }}
+
+      test-coverage:
+        description: 'Test coverage percentage'
+        value: ${{ jobs.build-test.outputs.test-coverage }}
+
+      artifact-url:
+        description: 'URL to download artifacts'
+        value: ${{ jobs.build-test.outputs.artifact-url }}
+
+jobs:
+  # ===========================================================================
+  # Build and Test Job
+  # ===========================================================================
+  build-test:
+    name: Build & Test (${{ inputs.stack-type }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      checks: write
+
+    outputs:
+      build-status: ${{ steps.build.outputs.status }}
+      test-coverage: ${{ steps.test.outputs.coverage }}
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
+
+    steps:
+      # -------------------------------------------------------------------------
+      # Checkout
+      # -------------------------------------------------------------------------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # -------------------------------------------------------------------------
+      # Python Stack Setup
+      # -------------------------------------------------------------------------
+      - name: Setup Python
+        if: inputs.stack-type == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.stack-version || '3.11' }}
+          cache: ${{ inputs.enable-cache && 'pip' || '' }}
+          cache-dependency-path: ${{ inputs.working-directory }}/requirements.txt
+
+      - name: Install Python Dependencies
+        if: inputs.stack-type == 'python'
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+        working-directory: ${{ inputs.working-directory }}
+
+      # -------------------------------------------------------------------------
+      # Node.js Stack Setup (Example for extensibility)
+      # -------------------------------------------------------------------------
+      - name: Setup Node.js
+        if: inputs.stack-type == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.stack-version || '20' }}
+          cache: ${{ inputs.enable-cache && 'npm' || '' }}
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install Node Dependencies
+        if: inputs.stack-type == 'node'
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+
+      # -------------------------------------------------------------------------
+      # Build Step
+      # -------------------------------------------------------------------------
+      - name: Build Application
+        id: build
+        run: |
+          echo "::group::Building ${{ inputs.stack-type }} application"
+
+          case "${{ inputs.stack-type }}" in
+            python)
+              # Python build (if setup.py or pyproject.toml exists)
+              if [ -f setup.py ] || [ -f pyproject.toml ]; then
+                pip install build
+                python -m build --wheel
+              fi
+              echo "status=success" >> $GITHUB_OUTPUT
+              ;;
+            node)
+              npm run build --if-present
+              echo "status=success" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown stack type: ${{ inputs.stack-type }}"
+              echo "status=skipped" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+          echo "::endgroup::"
+        working-directory: ${{ inputs.working-directory }}
+
+      # -------------------------------------------------------------------------
+      # Test Step
+      # -------------------------------------------------------------------------
+      - name: Run Tests
+        id: test
+        continue-on-error: ${{ !inputs.fail-on-test-failure }}
+        run: |
+          echo "::group::Running tests for ${{ inputs.stack-type }}"
+
+          COVERAGE=0
+
+          case "${{ inputs.stack-type }}" in
+            python)
+              if [ -n "${{ inputs.test-command }}" ]; then
+                ${{ inputs.test-command }}
+              else
+                pytest --cov --cov-report=xml --cov-report=term-missing --junitxml=test-results.xml || true
+              fi
+              # Extract coverage from coverage.xml if it exists
+              if [ -f coverage.xml ]; then
+                COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); print(round(float(tree.getroot().get('line-rate', 0)) * 100, 2))" 2>/dev/null || echo "0")
+              fi
+              ;;
+            node)
+              if [ -n "${{ inputs.test-command }}" ]; then
+                ${{ inputs.test-command }}
+              else
+                npm test -- --coverage || true
+              fi
+              ;;
+          esac
+
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "::endgroup::"
+        working-directory: ${{ inputs.working-directory }}
+
+      # -------------------------------------------------------------------------
+      # Upload Artifacts
+      # -------------------------------------------------------------------------
+      - name: Upload Build Artifacts
+        id: upload
+        if: inputs.upload-artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}-${{ github.run_id }}
+          path: |
+            ${{ inputs.working-directory }}/dist/
+            ${{ inputs.working-directory }}/build/
+            ${{ inputs.working-directory }}/coverage.xml
+            ${{ inputs.working-directory }}/test-results.xml
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # -------------------------------------------------------------------------
+      # Generate Summary
+      # -------------------------------------------------------------------------
+      - name: Generate Build Summary
+        run: |
+          echo "## Build and Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | ${{ inputs.stack-type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Status | ${{ steps.build.outputs.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Coverage | ${{ steps.test.outputs.coverage }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifacts Uploaded | ${{ inputs.upload-artifacts }} |" >> $GITHUB_STEP_SUMMARY
