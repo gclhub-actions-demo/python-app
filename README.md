@@ -28,6 +28,8 @@ This repository serves as an educational and reference implementation for:
 │   ├── REQUIRED_WORKFLOWS.md    # Required workflow setup
 │   └── MARKETPLACE_RESTRICTIONS.md  # Action policies
 ├── .github/
+│   ├── app-ci.json             # Central required CI project and extension config
+│   ├── ci/                     # Optional app-specific CI extensions
 │   ├── workflows/               # Workflow definitions
 │   │   ├── ci.yml              # Main CI pipeline
 │   │   ├── pr-validation.yml   # PR checks
@@ -67,7 +69,7 @@ pip install -r requirements.txt
 flask --app app run --debug
 
 # Run tests
-pytest --cov=app
+pytest --cov=app --cov-report=term-missing
 ```
 
 ## 🔧 Features Demonstrated
@@ -80,8 +82,28 @@ pytest --cov=app
 | PR Validation | `pr-validation.yml` | Comprehensive PR checks |
 | Release Automation | `release.yml` | Tag-triggered releases |
 | Environment Deploy | `environment-demo.yml` | Protected deployments |
-| Security Baseline | `required-security.yml` | Mandatory security checks |
-| Compliance | `required-compliance.yml` | Policy enforcement |
+| Local Security Demo | `required-security.yml` | Repository-local security workflow example |
+| Local Compliance Demo | `required-compliance.yml` | Repository-local compliance workflow example |
+
+### Organization-Required CI
+
+The organization-required workflow is maintained centrally in
+[`gclhub-actions-demo/required-workflows`](https://github.com/gclhub-actions-demo/required-workflows).
+It is enforced by an organization ruleset for pull requests targeting `main`; it is
+separate from this repository's local workflows and also runs for documentation-only
+changes. The central policy requires Python 3.11, flake8, pytest with an 80% minimum
+coverage threshold, and a package build.
+
+The central workflow discovers this application's project through
+[`.github/app-ci.json`](.github/app-ci.json). Its optional preflight and postflight
+scripts are app-specific additions, not replacements for the required checks. They
+run independently in fresh hosted jobs, so they must not depend on files or artifacts
+produced by the other jobs. The scripts validate the Python service layout and
+declared package metadata; they do not require secrets or write permissions.
+
+The existing `required-security.yml` and `required-compliance.yml` files remain
+repository-local demonstration workflows; their names do not make them the
+organization-required gate.
 
 ### Reusable Components
 
